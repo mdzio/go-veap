@@ -16,17 +16,17 @@ const (
 	StateBad             = 200
 )
 
-// Good returns true, of the state is good.
+// Good returns true, if the state is good.
 func (s State) Good() bool {
 	return s >= StateGood && s < StateUncertain
 }
 
-// Uncertain returns true, of the state is uncertain.
+// Uncertain returns true, if the state is uncertain.
 func (s State) Uncertain() bool {
 	return s >= StateUncertain && s < StateBad
 }
 
-// Bad returns true, of the state is bad or invalid.
+// Bad returns true, if the state is bad or invalid.
 func (s State) Bad() bool {
 	return s >= StateBad || s < StateGood
 }
