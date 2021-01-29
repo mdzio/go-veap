@@ -56,7 +56,7 @@ func TestRootAndDomain(t *testing.T) {
 		t.Error(attr)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "My Root", Role: "parent"},
+		{Target: "..", Title: "My Root", Role: "parent"},
 	}) {
 		t.Error(links)
 	}
@@ -75,7 +75,7 @@ func TestRootAndDomain(t *testing.T) {
 		t.Error(attr)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "mydomain", Title: "My Domain", Role: "children"},
+		{Target: "mydomain", Title: "My Domain", Role: "children"},
 	}) {
 		t.Errorf("%++v", links)
 	}
@@ -132,7 +132,7 @@ func TestVendor(t *testing.T) {
 		t.Error(attr)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "Root", Role: "collection"},
+		{Target: "..", Title: "Root", Role: "collection"},
 	}) {
 		t.Errorf("%++v", links)
 	}
@@ -163,8 +163,8 @@ func TestROVariable(t *testing.T) {
 		t.Error(attr)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "", Role: "collection"},
-		veap.Link{Target: "~pv", Title: "PV Service", Role: "service"},
+		{Target: "..", Title: "", Role: "collection"},
+		{Target: "~pv", Title: "PV Service", Role: "service"},
 	}) {
 		t.Errorf("%++v", links)
 	}
@@ -278,7 +278,7 @@ func TestModifiableDomain(t *testing.T) {
 		t.Error(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "Root title", Role: "collection"},
+		{Target: "..", Title: "Root title", Role: "collection"},
 	}) {
 		t.Error(links)
 	}
@@ -296,8 +296,8 @@ func TestModifiableDomain(t *testing.T) {
 		t.Error(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "comp1", Title: "comp1 title", Role: "item"},
-		veap.Link{Target: "..", Title: "Root title", Role: "collection"},
+		{Target: "comp1", Title: "comp1 title", Role: "item"},
+		{Target: "..", Title: "Root title", Role: "collection"},
 	}) {
 		t.Error(links)
 	}
@@ -307,7 +307,7 @@ func TestModifiableDomain(t *testing.T) {
 		t.Error(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "Domain title", Role: "parent"},
+		{Target: "..", Title: "Domain title", Role: "parent"},
 	}) {
 		t.Errorf("%+v", links)
 	}
@@ -329,7 +329,7 @@ func TestModifiableDomain(t *testing.T) {
 		t.Error(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "Root title", Role: "collection"},
+		{Target: "..", Title: "Root title", Role: "collection"},
 	}) {
 		t.Errorf("%+v", links)
 	}
@@ -361,7 +361,7 @@ func TestLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "", Role: "collection"},
+		{Target: "..", Title: "", Role: "collection"},
 	}) {
 		t.Errorf("%+v", links)
 	}
@@ -393,8 +393,8 @@ func TestLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "", Role: "collection"},
-		veap.Link{Target: "/d2", Title: "", Role: "rel1"},
+		{Target: "..", Title: "", Role: "collection"},
+		{Target: "/d2", Title: "", Role: "rel1"},
 	}) {
 		t.Errorf("%+v", links)
 	}
@@ -413,7 +413,7 @@ func TestLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "", Role: "collection"},
+		{Target: "..", Title: "", Role: "collection"},
 	}) {
 		t.Errorf("%+v", links)
 	}
@@ -434,8 +434,8 @@ func TestLinkedDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
-		veap.Link{Target: "..", Title: "", Role: "collection"},
-		veap.Link{Target: "/", Title: "", Role: "2nd root link"},
+		{Target: "..", Title: "", Role: "collection"},
+		{Target: "/", Title: "", Role: "2nd root link"},
 	}) {
 		t.Errorf("%+v", links)
 	}

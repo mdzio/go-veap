@@ -9,7 +9,7 @@ import (
 
 	"github.com/mdzio/go-veap"
 
-	"github.com/mdzio/go-lib/util/jsonutil"
+	"github.com/mdzio/go-lib/jsonutil"
 )
 
 func TestVendorAndStatistics(t *testing.T) {
