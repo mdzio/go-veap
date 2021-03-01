@@ -26,8 +26,8 @@ func TestHandlerPV(t *testing.T) {
 		{
 			PV{},
 			NewErrorf(StatusForbidden, "error message 1"),
-			"text/plain; charset=utf-8",
-			"error message 1\n",
+			"application/json",
+			`{"message":"error message 1"}`,
 			StatusForbidden,
 		},
 		{
@@ -111,8 +111,8 @@ func TestHandlerSetPV(t *testing.T) {
 			`{"ts":1234,"v":`,
 			nil,
 			PV{},
-			"text/plain; charset=utf-8",
-			"Conversion of JSON to PV failed: unexpected end of JSON input\n",
+			"application/json",
+			`{"message":"Conversion of JSON to PV failed: unexpected end of JSON input"}`,
 			StatusBadRequest,
 		},
 		{
@@ -147,8 +147,8 @@ func TestHandlerSetPV(t *testing.T) {
 				true,
 				0,
 			},
-			"text/plain; charset=utf-8",
-			"no access\n",
+			"application/json",
+			`{"message":"no access"}`,
 			StatusForbidden,
 		},
 	}
@@ -334,8 +334,8 @@ func TestHandlerProperties(t *testing.T) {
 				"a": 3, "b.c": "str",
 			},
 			[]Link{
-				Link{"itf", "..", "Itf"},
-				Link{"itf", "/a/b", "B"},
+				{"itf", "..", "Itf"},
+				{"itf", "/a/b", "B"},
 			},
 			`{"a":3,"b.c":"str","~links":[{"rel":"itf","href":"..","title":"Itf"},{"rel":"itf","href":"/veap/a/b","title":"B"}]}`,
 		},
@@ -344,7 +344,7 @@ func TestHandlerProperties(t *testing.T) {
 				"b": false,
 			},
 			[]Link{
-				Link{"dp", "c", ""},
+				{"dp", "c", ""},
 			},
 			`{"b":false,"~links":[{"rel":"dp","href":"c"}]}`,
 		},
@@ -464,7 +464,7 @@ func TestHandlerDelete(t *testing.T) {
 			`/a`,
 			NewErrorf(StatusNotFound, "not found"),
 			StatusNotFound,
-			"not found\n",
+			`{"message":"not found"}`,
 		},
 		{
 			`/%2F`,
@@ -556,7 +556,7 @@ func TestHandlerStatistics(t *testing.T) {
 	if h.Stats.ErrorResponses != 1 {
 		t.Error(h.Stats.ErrorResponses)
 	}
-	if h.Stats.ResponseBytes != 58 {
+	if h.Stats.ResponseBytes != 72 {
 		t.Error(h.Stats.ResponseBytes)
 	}
 }
@@ -577,7 +577,7 @@ func TestHandlerRequestLimit(t *testing.T) {
 		t.Error(resp.StatusCode)
 	}
 	b, _ := ioutil.ReadAll(resp.Body)
-	if string(b) != "Receiving of request failed: http: request body too large\n" {
+	if string(b) != `{"message":"Receiving of request failed: http: request body too large"}` {
 		t.Error(string(b))
 	}
 }

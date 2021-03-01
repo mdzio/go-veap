@@ -158,6 +158,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 		handlerLog.Tracef("Response code: %d", respCode)
 	}
 	respWriter.Header().Set("Content-Type", "application/json")
+	respWriter.Header().Set("X-Content-Type-Options", "nosniff")
 	respWriter.Header().Set("Content-Length", strconv.Itoa(len(respBytes)))
 	respWriter.WriteHeader(respCode)
 	if _, err = respWriter.Write(respBytes); err != nil {
@@ -166,16 +167,37 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 	}
 }
 
+type wireError struct {
+	Message string `json:"message"`
+}
+
 func (h *Handler) errorResponse(respWriter http.ResponseWriter, request *http.Request, code int, format string, args ...interface{}) {
+	// create error object
+	w := wireError{Message: fmt.Sprintf(format, args...)}
+
 	// log error
-	msg := fmt.Sprintf(format, args...)
-	handlerLog.Warningf("Request from %s: %s", request.RemoteAddr, msg)
-	handlerLog.Tracef("Response code: %d", code)
+	handlerLog.Warningf("Request from %s: %s; code %d", request.RemoteAddr, w.Message, code)
+
+	// marshal error as JSON
+	b, err := json.Marshal(w)
+	if err != nil {
+		handlerLog.Warningf("Conversion of error to JSON failed: %v", err)
+		return
+	}
+
+	// send error
+	respWriter.Header().Set("Content-Type", "application/json")
+	respWriter.Header().Set("X-Content-Type-Options", "nosniff")
+	respWriter.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	respWriter.WriteHeader(code)
+	if _, err = respWriter.Write(b); err != nil {
+		handlerLog.Warningf("Sending error response to %s failed: %v", request.RemoteAddr, err)
+		return
+	}
+
 	// update statistics
 	atomic.AddUint64(&h.Stats.ErrorResponses, 1)
-	atomic.AddUint64(&h.Stats.ResponseBytes, uint64(len(msg)))
-	// send error
-	http.Error(respWriter, msg, code)
+	atomic.AddUint64(&h.Stats.ResponseBytes, uint64(len(b)))
 }
 
 func (h *Handler) servePV(path string) ([]byte, error) {
