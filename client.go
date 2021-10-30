@@ -75,12 +75,11 @@ func (c *Client) ReadPV(path string) (PV, Error) {
 	}
 
 	// unmarshal JSON
-	var w wirePV
-	err = json.Unmarshal(respBytes, &w)
+	pv, err := wireToPV(respBytes, false /* no fuzzy parsing */)
 	if err != nil {
 		return PV{}, NewErrorf(StatusClientError, "Conversion of JSON to PV failed: %v", err)
 	}
-	return wireToPV(w), nil
+	return pv, nil
 }
 
 // WritePV sets the process value of a data point. VEAP-Protocol: HTTP-PUT

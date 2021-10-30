@@ -12,8 +12,8 @@ type State int
 // Base state values for a process value.
 const (
 	StateGood      State = 0
-	StateUncertain       = 100
-	StateBad             = 200
+	StateUncertain State = 100
+	StateBad       State = 200
 )
 
 // Good returns true, if the state is good.
@@ -56,13 +56,13 @@ func (pv PV) Equal(o PV) bool {
 // VEAP service error codes. They are based on the HTTP status codes.
 const (
 	StatusOK                  int = 200
-	StatusCreated                 = 201
-	StatusBadRequest              = 400
-	StatusUnauthorized            = 401
-	StatusForbidden               = 403
-	StatusNotFound                = 404
-	StatusMethodNotAllowed        = 405
-	StatusInternalServerError     = 500
+	StatusCreated             int = 201
+	StatusBadRequest          int = 400
+	StatusUnauthorized        int = 401
+	StatusForbidden           int = 403
+	StatusNotFound            int = 404
+	StatusMethodNotAllowed    int = 405
+	StatusInternalServerError int = 500
 
 	// Signals an error in VEAP client code (e.g. no connection to VEAP server,
 	// deserialization failed).

@@ -1,7 +1,9 @@
 package veap
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -28,6 +30,15 @@ const (
 
 	// default max. number of entries in a history
 	defaultHistorySizeLimit = 10000
+
+	// query parameters
+	writePVQueryParam = "writepv"
+	formatQueryParam  = "format"
+	formatSimple      = "simple"
+
+	// content types
+	contentTypeJSON = "application/json"
+	contentTypeText = "text/plain; charset=utf-8"
 )
 
 var handlerLog = logging.Get("veap-handler")
@@ -93,14 +104,25 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 	// dispatch VEAP service
 	respCode := http.StatusOK
 	var respBytes []byte
+	var contentType = contentTypeJSON
 	base := path.Base(fullPath)
 	switch base {
 	case pvMarker:
 		switch request.Method {
 		case http.MethodGet:
-			respBytes, err = h.servePV(path.Dir(fullPath))
+			qvs := request.URL.Query()
+			wpv := qvs.Get(writePVQueryParam)
+			if wpv != "" {
+				// VEAP protocol extension: HTTP-GET request for writing PV with
+				// query parameter 'writepv'
+				err = h.serveSetPV(path.Dir(fullPath), []byte(wpv), true /* fuzzy parsing */)
+			} else {
+				// VEAP protocol extension: returning PV in specific format with
+				// query parameter 'format', contentType may be changed
+				respBytes, contentType, err = h.servePV(path.Dir(fullPath), qvs.Get(formatQueryParam))
+			}
 		case http.MethodPut:
-			err = h.serveSetPV(path.Dir(fullPath), reqBytes)
+			err = h.serveSetPV(path.Dir(fullPath), reqBytes, false /* no fuzzy parsing */)
 		default:
 			h.errorResponse(respWriter, request, StatusMethodNotAllowed,
 				"Method %s not allowed for PV %s", request.Method, fullPath)
@@ -157,7 +179,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 		}
 		handlerLog.Tracef("Response code: %d", respCode)
 	}
-	respWriter.Header().Set("Content-Type", "application/json")
+	respWriter.Header().Set("Content-Type", contentType)
 	respWriter.Header().Set("X-Content-Type-Options", "nosniff")
 	respWriter.Header().Set("Content-Length", strconv.Itoa(len(respBytes)))
 	respWriter.WriteHeader(respCode)
@@ -200,31 +222,35 @@ func (h *Handler) errorResponse(respWriter http.ResponseWriter, request *http.Re
 	atomic.AddUint64(&h.Stats.ResponseBytes, uint64(len(b)))
 }
 
-func (h *Handler) servePV(path string) ([]byte, error) {
+func (h *Handler) servePV(path string, format string) ([]byte, string, error) {
 	// invoke service
 	pv, svcErr := h.Service.ReadPV(path)
 	if svcErr != nil {
-		return nil, svcErr
+		return nil, "", svcErr
 	}
 
-	// convert PV to JSON
+	// format PV
+	if format == formatSimple {
+		return []byte(fmt.Sprint(pv.Value)), contentTypeText, nil
+	}
+
+	// default format: convert PV to JSON
 	b, err := json.Marshal(pvToWire(pv))
 	if err != nil {
-		return nil, fmt.Errorf("Conversion of PV to JSON failed: %v", err)
+		return nil, "", fmt.Errorf("Conversion of PV to JSON failed: %v", err)
 	}
-	return b, nil
+	return b, contentTypeJSON, nil
 }
 
-func (h *Handler) serveSetPV(path string, b []byte) error {
+func (h *Handler) serveSetPV(path string, b []byte, fuzzy bool) error {
 	// convert JSON to PV
-	var w wirePV
-	err := json.Unmarshal(b, &w)
+	pv, err := wireToPV(b, fuzzy)
 	if err != nil {
 		return NewErrorf(StatusBadRequest, "Conversion of JSON to PV failed: %v", err)
 	}
 
 	// invoke service
-	return h.Service.WritePV(path, wireToPV(w))
+	return h.Service.WritePV(path, pv)
 }
 
 func (h *Handler) serveHistory(path string, params url.Values) ([]byte, error) {
@@ -405,7 +431,44 @@ type wirePV struct {
 	State State       `json:"s"`
 }
 
-func wireToPV(w wirePV) PV {
+var errUnexpectetContent = errors.New("Unexpectet content")
+
+func wireToPV(payload []byte, fuzzy bool) (PV, error) {
+	// try to convert JSON to wirePV
+	var w wirePV
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&w)
+	if err == nil {
+		// check for unexpected content
+		c, err2 := ioutil.ReadAll(dec.Buffered())
+		if err2 != nil {
+			return PV{}, fmt.Errorf("ReadAll failed: %w", err2)
+		}
+		// allow only white space
+		cs := strings.TrimSpace(string(c))
+		if len(cs) != 0 {
+			err = errUnexpectetContent
+		}
+	}
+
+	// parsing failed?
+	if err != nil {
+		// if not fuzzy mode, return error
+		if !fuzzy {
+			return PV{}, err
+		}
+		// take whole payload as JSON value
+		var v interface{}
+		err = json.Unmarshal(payload, &v)
+		if err == nil {
+			w = wirePV{Value: v}
+		} else {
+			// if no valid JSON content is found, use the whole payload as string
+			w = wirePV{Value: string(payload)}
+		}
+	}
+
 	// if no timestamp is provided, use current time
 	var ts time.Time
 	if w.Time == 0 {
@@ -413,12 +476,13 @@ func wireToPV(w wirePV) PV {
 	} else {
 		ts = time.Unix(0, w.Time*1000000)
 	}
+
 	// if no state is provided, state is implicit GOOD
 	return PV{
-		ts,
-		w.Value,
-		w.State,
-	}
+		Time:  ts,
+		Value: w.Value,
+		State: w.State,
+	}, nil
 }
 
 func pvToWire(pv PV) wirePV {
