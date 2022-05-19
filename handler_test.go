@@ -635,7 +635,7 @@ func TestExgData(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := httpPUT(srv.URL+"/~exgdata", "")
+	_, err := httpPUT(srv.URL+"/~exgdata", "")
 	if err == nil {
 		t.Fatalf("Expected error")
 	}
@@ -652,7 +652,7 @@ func TestExgData(t *testing.T) {
 			"/c"
 		]
 	}`
-	resp, err = httpPUT(srv.URL+"/~exgdata", body)
+	resp, err := httpPUT(srv.URL+"/~exgdata", body)
 	if err != nil {
 		t.Fatal(err)
 	}

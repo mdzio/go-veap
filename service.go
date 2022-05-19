@@ -274,7 +274,7 @@ func (m *BasicMetaService) ExgData(writePVs []WritePVParam, readPaths []string) 
 
 // ReadProperties overrides Service.ReadProperties.
 func (m *BasicMetaService) ReadProperties(path string) (attr AttrValues, links []Link, err Error) {
-	attr, links, err = m.ReadProperties(path)
+	attr, links, err = m.Service.ReadProperties(path)
 	if path != "/" || err != nil {
 		return
 	}
