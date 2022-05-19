@@ -19,8 +19,9 @@ import (
 
 const (
 	// service markers
-	pvMarker   = "~pv"
-	histMarker = "~hist"
+	pvMarker      = "~pv"
+	histMarker    = "~hist"
+	exgDataMarker = "~exgdata"
 
 	// property markers
 	linksMarker = "~links"
@@ -107,6 +108,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 	var contentType = contentTypeJSON
 	base := path.Base(fullPath)
 	switch base {
+
 	case pvMarker:
 		switch request.Method {
 		case http.MethodGet:
@@ -128,6 +130,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 				"Method %s not allowed for PV %s", request.Method, fullPath)
 			return
 		}
+
 	case histMarker:
 		switch request.Method {
 		case http.MethodGet:
@@ -139,6 +142,20 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 				"Method %s not allowed for history %s", request.Method, fullPath)
 			return
 		}
+
+	case exgDataMarker:
+		if request.Method != http.MethodPut {
+			h.errorResponse(respWriter, request, StatusMethodNotAllowed,
+				"Invalid method for ExgData service: %s", request.Method)
+			return
+		}
+		if fullPath != "/"+exgDataMarker {
+			h.errorResponse(respWriter, request, StatusNotFound,
+				"Invalid path for ExgData service: %s", fullPath)
+			return
+		}
+		respBytes, err = h.serveExgData(reqBytes)
+
 	default:
 		switch request.Method {
 		case http.MethodGet:
@@ -189,13 +206,13 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 	}
 }
 
-type wireError struct {
+type wireServiceError struct {
 	Message string `json:"message"`
 }
 
 func (h *Handler) errorResponse(respWriter http.ResponseWriter, request *http.Request, code int, format string, args ...interface{}) {
 	// create error object
-	w := wireError{Message: fmt.Sprintf(format, args...)}
+	w := wireServiceError{Message: fmt.Sprintf(format, args...)}
 
 	// log error
 	handlerLog.Warningf("Request from %s: %s; code %d", request.RemoteAddr, w.Message, code)
@@ -244,7 +261,7 @@ func (h *Handler) servePV(path string, format string) ([]byte, string, error) {
 
 func (h *Handler) serveSetPV(path string, b []byte, fuzzy bool) error {
 	// convert JSON to PV
-	pv, err := wireToPV(b, fuzzy)
+	pv, err := bytesToPV(b, fuzzy)
 	if err != nil {
 		return NewErrorf(StatusBadRequest, "Conversion of JSON to PV failed: %v", err)
 	}
@@ -383,6 +400,39 @@ func (h *Handler) serveDelete(path string) error {
 	return h.Service.Delete(path)
 }
 
+func (h *Handler) serveExgData(reqBytes []byte) (respBytes []byte, serviceErr error) {
+	// service provided?
+	ms, ok := h.Service.(MetaService)
+	if !ok {
+		serviceErr = NewErrorf(StatusBadRequest, "ExgData service not implemented")
+		return
+	}
+
+	// decode params
+	var wireParams wireExgDataParams
+	err := json.Unmarshal(reqBytes, &wireParams)
+	if err != nil {
+		serviceErr = NewErrorf(StatusBadRequest, "Invalid JSON for ExgData parameters: %v", err)
+		return
+	}
+	writePVs, readPaths := wireToExgDataParams(&wireParams)
+
+	// call service
+	writeErrors, readResults, serviceErr := ms.ExgData(writePVs, readPaths)
+	if serviceErr != nil {
+		return
+	}
+
+	// encode results
+	wireResult := exgDataResultsToWire(writeErrors, readResults)
+	respBytes, err = json.Marshal(wireResult)
+	if err != nil {
+		serviceErr = NewErrorf(StatusInternalServerError, "Conversion of ExgData results to JSON failed: %v", err)
+		return
+	}
+	return
+}
+
 func (h *Handler) requestSizeLimit() int64 {
 	if h.RequestSizeLimit == 0 {
 		return defaultRequestSizeLimit
@@ -433,7 +483,7 @@ type wirePV struct {
 
 var errUnexpectetContent = errors.New("Unexpectet content")
 
-func wireToPV(payload []byte, fuzzy bool) (PV, error) {
+func bytesToPV(payload []byte, fuzzy bool) (PV, error) {
 	// try to convert JSON to wirePV
 	var w wirePV
 	dec := json.NewDecoder(bytes.NewReader(payload))
@@ -485,12 +535,29 @@ func wireToPV(payload []byte, fuzzy bool) (PV, error) {
 	}, nil
 }
 
+func wireToPV(wirePV wirePV) PV {
+	// if no timestamp is provided, use current time
+	var ts time.Time
+	if wirePV.Time == 0 {
+		ts = time.Now()
+	} else {
+		ts = time.Unix(0, wirePV.Time*1000000)
+	}
+
+	// if no state is provided, state is implicit GOOD
+	return PV{
+		Time:  ts,
+		Value: wirePV.Value,
+		State: wirePV.State,
+	}
+}
+
 func pvToWire(pv PV) wirePV {
-	var w wirePV
-	w.Time = pv.Time.UnixNano() / 1000000
-	w.Value = pv.Value
-	w.State = pv.State
-	return w
+	return wirePV{
+		Time:  pv.Time.UnixNano() / 1000000,
+		Value: pv.Value,
+		State: pv.State,
+	}
 }
 
 type wireHist struct {
@@ -532,4 +599,64 @@ type wireLink struct {
 	Role   string `json:"rel"`
 	Target string `json:"href"`
 	Title  string `json:"title,omitempty"`
+}
+
+type wireError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message,omitempty"`
+}
+
+func errorToWire(err Error) *wireError {
+	if err == nil {
+		return nil
+	}
+	return &wireError{err.Code(), err.Error()}
+}
+
+type wireWritePVParam struct {
+	Path string `json:"path"`
+	PV   wirePV `json:"pv"`
+}
+
+type wireExgDataParams struct {
+	WritePVs  []wireWritePVParam `json:"writePVs"`
+	ReadPaths []string           `json:"readPaths"`
+}
+
+type wireReadPVResult struct {
+	PV    *wirePV    `json:"pv,omitempty"`
+	Error *wireError `json:"error,omitempty"`
+}
+
+type wireExgDataResults struct {
+	WriteErrors []*wireError       `json:"writeErrors"`
+	ReadResults []wireReadPVResult `json:"readResults"`
+}
+
+func wireToExgDataParams(w *wireExgDataParams) (writePVs []WritePVParam, readPaths []string) {
+	writePVs = make([]WritePVParam, len(w.WritePVs))
+	for i := range w.WritePVs {
+		writePVs[i].Path = w.WritePVs[i].Path
+		writePVs[i].PV = wireToPV(w.WritePVs[i].PV)
+	}
+	readPaths = w.ReadPaths
+	return
+}
+
+func exgDataResultsToWire(writeErrors []Error, readResults []ReadPVResult) *wireExgDataResults {
+	w := &wireExgDataResults{}
+	w.WriteErrors = make([]*wireError, len(writeErrors))
+	for i := range writeErrors {
+		w.WriteErrors[i] = errorToWire(writeErrors[i])
+	}
+	w.ReadResults = make([]wireReadPVResult, len(readResults))
+	for i := range readResults {
+		if err := readResults[i].Error; err != nil {
+			w.ReadResults[i].Error = errorToWire(err)
+		} else {
+			wpv := pvToWire(readResults[i].PV)
+			w.ReadResults[i].PV = &wpv
+		}
+	}
+	return w
 }

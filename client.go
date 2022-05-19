@@ -75,7 +75,7 @@ func (c *Client) ReadPV(path string) (PV, Error) {
 	}
 
 	// unmarshal JSON
-	pv, err := wireToPV(respBytes, false /* no fuzzy parsing */)
+	pv, err := bytesToPV(respBytes, false /* no fuzzy parsing */)
 	if err != nil {
 		return PV{}, NewErrorf(StatusClientError, "Conversion of JSON to PV failed: %v", err)
 	}

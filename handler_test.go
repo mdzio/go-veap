@@ -2,6 +2,7 @@ package veap
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -579,5 +580,102 @@ func TestHandlerRequestLimit(t *testing.T) {
 	b, _ := ioutil.ReadAll(resp.Body)
 	if string(b) != `{"message":"Receiving of request failed: http: request body too large"}` {
 		t.Error(string(b))
+	}
+}
+
+func httpPUT(url, body string) (string, error) {
+	reqBody := bytes.NewBufferString(body)
+	req, err := http.NewRequest(http.MethodPut, url, reqBody)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != StatusOK {
+		return "", fmt.Errorf("Status: %d", resp.StatusCode)
+	}
+	respBody, _ := ioutil.ReadAll(resp.Body)
+	return string(respBody), nil
+}
+
+func TestExgData(t *testing.T) {
+	svc := FuncService{
+		ReadPVFunc: func(path string) (PV, Error) {
+			switch path {
+			case "/a":
+				return PV{Time: time.Unix(0, 0), Value: 1.0}, nil
+			case "/b":
+				return PV{Time: time.Unix(0, 0), Value: "bbb"}, nil
+			default:
+				return PV{}, NewErrorf(StatusNotFound, "Not found: %s", path)
+			}
+		},
+		WritePVFunc: func(path string, pv PV) Error {
+			switch path {
+			case "/a":
+				if !reflect.DeepEqual(pv.Value, 2.0) {
+					return NewErrorf(StatusBadRequest, "Invalid value for /a")
+				}
+				return nil
+			case "/b":
+				if !reflect.DeepEqual(pv.Value, "aaa") {
+					return NewErrorf(StatusBadRequest, "Invalid value for /b")
+				}
+				return nil
+			default:
+				return NewErrorf(StatusNotFound, "Not found: %s", path)
+			}
+		},
+	}
+	msvc := &BasicMetaService{Service: &svc}
+	h := &Handler{Service: msvc}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := httpPUT(srv.URL+"/~exgdata", "")
+	if err == nil {
+		t.Fatalf("Expected error")
+	}
+
+	body := `{
+		"writePVs":[
+			{"path":"/a","pv":{"v":2.0}},
+			{"path":"/b","pv":{"v":"aaa"}},
+			{"path":"/c"}
+		],
+		"readPaths":[
+			"/a",
+			"/b",
+			"/c"
+		]
+	}`
+	resp, err = httpPUT(srv.URL+"/~exgdata", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != `{"writeErrors":[null,null,{"code":404,"message":"Not found: /c"}],`+
+		`"readResults":[{"pv":{"ts":0,"v":1,"s":0}},{"pv":{"ts":0,"v":"bbb","s":0}},{"error":{"code":404,"message":"Not found: /c"}}]}` {
+		t.Fatalf("Unexpected response: %s", resp)
+	}
+
+	body = `{
+		"writePVs":[
+			{"path":"/a","pv":{"v":1.0}},
+			{"path":"/b","pv":{"v":"bbb"}}
+		],
+		"readPaths":[
+			"/d"
+		]
+	}`
+	resp, err = httpPUT(srv.URL+"/~exgdata", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != `{"writeErrors":[{"code":400,"message":"Invalid value for /a"},{"code":400,"message":"Invalid value for /b"}],`+
+		`"readResults":[{"error":{"code":404,"message":"Not found: /d"}}]}` {
+		t.Fatalf("Unexpected response: %s", resp)
 	}
 }

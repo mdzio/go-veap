@@ -226,3 +226,63 @@ func (s *FuncService) Delete(path string) Error {
 	}
 	return s.DeleteFunc(path)
 }
+
+// Parameters for a single WritePV (q.v. MetaService).
+type WritePVParam struct {
+	Path string
+	PV   PV
+}
+
+// Results of a single ReadPV (q.v. MetaService).
+type ReadPVResult struct {
+	PV    PV
+	Error Error
+}
+
+// MetaService provides additional services. Usually they can be implemented on
+// the basis of the Service interface. However, for performance gains they can
+// be implemented optimized for the target system.
+type MetaService interface {
+	// With ExgData multiple services can be used in one request. This is
+	// recommended e.g. for networks with high latencies, for transactions or
+	// for optimized requests to the target system. The services are executed in
+	// the following order: WritePV, ReadPV.
+	ExgData(writePVs []WritePVParam, readPaths []string) (writeErrors []Error, readResults []ReadPVResult, serviceError Error)
+}
+
+// BasicMetaService implements MetaService based on a provided Service.
+type BasicMetaService struct {
+	Service
+}
+
+// ExgData implements MetaService.ExgData.
+func (m *BasicMetaService) ExgData(writePVs []WritePVParam, readPaths []string) (writeErrors []Error, readResults []ReadPVResult, serviceError Error) {
+	// service WritePV
+	writeErrors = make([]Error, len(writePVs))
+	for i := range writePVs {
+		writeErrors[i] = m.WritePV(writePVs[i].Path, writePVs[i].PV)
+	}
+	// service ReadPV
+	readResults = make([]ReadPVResult, len(readPaths))
+	for i := range readPaths {
+		pv, err := m.ReadPV(readPaths[i])
+		readResults[i] = ReadPVResult{pv, err}
+	}
+	// no serviceError
+	return
+}
+
+// ReadProperties overrides Service.ReadProperties.
+func (m *BasicMetaService) ReadProperties(path string) (attr AttrValues, links []Link, err Error) {
+	attr, links, err = m.ReadProperties(path)
+	if path != "/" || err != nil {
+		return
+	}
+	// add /~exgdata link
+	links = append(links, Link{
+		Role:   "service",
+		Target: exgDataMarker,
+		Title:  "ExgData Service",
+	})
+	return
+}
