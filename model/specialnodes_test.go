@@ -7,16 +7,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mdzio/go-veap"
-
 	"github.com/mdzio/go-lib/jsonutil"
+	"github.com/mdzio/go-veap/server"
 )
 
 func TestVendorAndStatistics(t *testing.T) {
 	// build model
 	root := NewRoot(&RootCfg{})
 	service := &Service{Root: root}
-	handler := &veap.Handler{Service: service}
+	handler := &server.Handler{Service: service}
 	vendor := NewVendor(&VendorCfg{
 		ServerName:        "VEAP Demonstration Server",
 		ServerVersion:     "0.1.0",

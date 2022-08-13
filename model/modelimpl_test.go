@@ -164,7 +164,7 @@ func TestROVariable(t *testing.T) {
 	}
 	if !reflect.DeepEqual(links, []veap.Link{
 		{Target: "..", Title: "", Role: "collection"},
-		{Target: "~pv", Title: "PV Service", Role: "service"},
+		{Target: veap.PVMarker, Title: "PV Service", Role: veap.ServiceMarker},
 	}) {
 		t.Errorf("%++v", links)
 	}

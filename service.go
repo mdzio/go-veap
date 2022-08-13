@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+const (
+	// Service markers
+	ServiceMarker = "~service"
+	PVMarker      = "~pv"
+	HistMarker    = "~hist"
+
+	// Property markers
+	LinksMarker = "~links"
+)
+
 // State is the current state of a process value.
 type State int
 
@@ -158,131 +168,4 @@ type Service interface {
 
 	// Delete destroys a VEAP object. VEAP-Protocol: HTTP-DELETE on object
 	Delete(path string) Error
-}
-
-// FuncService delegates service calls to a set of functions.
-type FuncService struct {
-	ReadPVFunc          func(path string) (PV, Error)
-	WritePVFunc         func(path string, pv PV) Error
-	ReadHistoryFunc     func(path string, begin time.Time, end time.Time, limit int64) ([]PV, Error)
-	WriteHistoryFunc    func(path string, timeSeries []PV) Error
-	ReadPropertiesFunc  func(path string) (attributes AttrValues, links []Link, err Error)
-	WritePropertiesFunc func(path string, attributes AttrValues) (created bool, err Error)
-	DeleteFunc          func(path string) Error
-}
-
-// ReadPV implements Service.
-func (s *FuncService) ReadPV(path string) (PV, Error) {
-	if s.ReadPVFunc == nil {
-		return PV{}, NewErrorf(StatusInternalServerError, "PVFunc not provided")
-	}
-	return s.ReadPVFunc(path)
-}
-
-// WritePV implements Service.
-func (s *FuncService) WritePV(path string, pv PV) Error {
-	if s.WritePVFunc == nil {
-		return NewErrorf(StatusInternalServerError, "SetPVFunc not provided")
-	}
-	return s.WritePVFunc(path, pv)
-}
-
-// ReadHistory implements Service.
-func (s *FuncService) ReadHistory(path string, begin time.Time, end time.Time, limit int64) ([]PV, Error) {
-	if s.ReadHistoryFunc == nil {
-		return []PV{}, NewErrorf(StatusInternalServerError, "HistoryFunc not provided")
-	}
-	return s.ReadHistoryFunc(path, begin, end, limit)
-}
-
-// WriteHistory implements Service.
-func (s *FuncService) WriteHistory(path string, timeSeries []PV) Error {
-	if s.WriteHistoryFunc == nil {
-		return NewErrorf(StatusInternalServerError, "SetHistoryFunc not provided")
-	}
-	return s.WriteHistoryFunc(path, timeSeries)
-}
-
-// ReadProperties implements Service.
-func (s *FuncService) ReadProperties(path string) (attributes AttrValues, links []Link, err Error) {
-	if s.ReadPropertiesFunc == nil {
-		return nil, nil, NewErrorf(StatusInternalServerError, "PropertiesFunc not provided")
-	}
-	return s.ReadPropertiesFunc(path)
-}
-
-// WriteProperties implements Service.
-func (s *FuncService) WriteProperties(path string, attributes AttrValues) (bool, Error) {
-	if s.WritePropertiesFunc == nil {
-		return false, NewErrorf(StatusInternalServerError, "SetPropertiesFunc not provided")
-	}
-	return s.WritePropertiesFunc(path, attributes)
-}
-
-// Delete implements Service.
-func (s *FuncService) Delete(path string) Error {
-	if s.DeleteFunc == nil {
-		return NewErrorf(StatusInternalServerError, "DeleteFunc not provided")
-	}
-	return s.DeleteFunc(path)
-}
-
-// Parameters for a single WritePV (q.v. MetaService).
-type WritePVParam struct {
-	Path string
-	PV   PV
-}
-
-// Results of a single ReadPV (q.v. MetaService).
-type ReadPVResult struct {
-	PV    PV
-	Error Error
-}
-
-// MetaService provides additional services. Usually they can be implemented on
-// the basis of the Service interface. However, for performance gains they can
-// be implemented optimized for the target system.
-type MetaService interface {
-	// With ExgData multiple services can be used in one request. This is
-	// recommended e.g. for networks with high latencies, for transactions or
-	// for optimized requests to the target system. The services are executed in
-	// the following order: WritePV, ReadPV.
-	ExgData(writePVs []WritePVParam, readPaths []string) (writeErrors []Error, readResults []ReadPVResult, serviceError Error)
-}
-
-// BasicMetaService implements MetaService based on a provided Service.
-type BasicMetaService struct {
-	Service
-}
-
-// ExgData implements MetaService.ExgData.
-func (m *BasicMetaService) ExgData(writePVs []WritePVParam, readPaths []string) (writeErrors []Error, readResults []ReadPVResult, serviceError Error) {
-	// service WritePV
-	writeErrors = make([]Error, len(writePVs))
-	for i := range writePVs {
-		writeErrors[i] = m.WritePV(writePVs[i].Path, writePVs[i].PV)
-	}
-	// service ReadPV
-	readResults = make([]ReadPVResult, len(readPaths))
-	for i := range readPaths {
-		pv, err := m.ReadPV(readPaths[i])
-		readResults[i] = ReadPVResult{pv, err}
-	}
-	// no serviceError
-	return
-}
-
-// ReadProperties overrides Service.ReadProperties.
-func (m *BasicMetaService) ReadProperties(path string) (attr AttrValues, links []Link, err Error) {
-	attr, links, err = m.Service.ReadProperties(path)
-	if path != "/" || err != nil {
-		return
-	}
-	// add /~exgdata link
-	links = append(links, Link{
-		Role:   "service",
-		Target: exgDataMarker,
-		Title:  "ExgData Service",
-	})
-	return
 }

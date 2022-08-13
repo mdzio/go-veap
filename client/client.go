@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/mdzio/go-lib/any"
+	"github.com/mdzio/go-veap"
+	"github.com/mdzio/go-veap/encoding"
 
 	"github.com/mdzio/go-logging"
 )
@@ -51,21 +53,21 @@ func (c *Client) Init() {
 
 // ReadPV reads the process value of a data point. The path must not end with /~pv.
 // VEAP-Protocol: HTTP-GET on PV (.../~pv)
-func (c *Client) ReadPV(path string) (PV, Error) {
+func (c *Client) ReadPV(path string) (veap.PV, veap.Error) {
 	// do request
-	url := c.URL + path + "/" + pvMarker
+	url := c.URL + path + "/" + veap.PVMarker
 	c.Log.Debugf("Sending HTTP-GET request to %s", url)
 	resp, err := c.Client.Get(url)
 	if err != nil {
-		return PV{}, NewErrorf(StatusClientError, "HTTP-GET on %s failed: %v", url, err)
+		return veap.PV{}, veap.NewErrorf(veap.StatusClientError, "HTTP-GET on %s failed: %v", url, err)
 	}
 	defer resp.Body.Close()
 	respBytes, err := c.readLimited(resp.Body)
 	if err != nil {
-		return PV{}, NewError(StatusClientError, err)
+		return veap.PV{}, veap.NewError(veap.StatusClientError, err)
 	}
-	if resp.StatusCode != StatusOK {
-		return PV{}, NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+	if resp.StatusCode != veap.StatusOK {
+		return veap.PV{}, veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
 			resp.StatusCode, string(respBytes))
 	}
 
@@ -75,22 +77,22 @@ func (c *Client) ReadPV(path string) (PV, Error) {
 	}
 
 	// unmarshal JSON
-	pv, err := bytesToPV(respBytes, false /* no fuzzy parsing */)
+	pv, err := encoding.BytesToPV(respBytes, false /* no fuzzy parsing */)
 	if err != nil {
-		return PV{}, NewErrorf(StatusClientError, "Conversion of JSON to PV failed: %v", err)
+		return veap.PV{}, veap.NewErrorf(veap.StatusClientError, "Conversion of JSON to PV failed: %v", err)
 	}
 	return pv, nil
 }
 
 // WritePV sets the process value of a data point. VEAP-Protocol: HTTP-PUT
 // on PV (.../~pv)
-func (c *Client) WritePV(path string, pv PV) Error {
+func (c *Client) WritePV(path string, pv veap.PV) veap.Error {
 	// convert PV to JSON
-	url := c.URL + path + "/" + pvMarker
+	url := c.URL + path + "/" + veap.PVMarker
 	c.Log.Debugf("Sending HTTP-PUT request to %s", url)
-	reqBytes, err := json.Marshal(pvToWire(pv))
+	reqBytes, err := json.Marshal(encoding.PVToWire(pv))
 	if err != nil {
-		return NewErrorf(StatusClientError, "Conversion of PV to JSON failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "Conversion of PV to JSON failed: %v", err)
 	}
 
 	// log request
@@ -102,18 +104,18 @@ func (c *Client) WritePV(path string, pv PV) Error {
 	buf := bytes.NewBuffer(reqBytes)
 	req, err := http.NewRequest(http.MethodPut, url, buf)
 	if err != nil {
-		return NewErrorf(StatusClientError, "Creating HTTP-PUT request failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "Creating HTTP-PUT request failed: %v", err)
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return NewErrorf(StatusClientError, "HTTP-PUT request failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "HTTP-PUT request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	// check result
-	if resp.StatusCode != StatusOK {
+	if resp.StatusCode != veap.StatusOK {
 		respBytes, _ := c.readLimited(resp.Body)
-		return NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+		return veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
 			resp.StatusCode, string(respBytes))
 	}
 	return nil
@@ -122,7 +124,7 @@ func (c *Client) WritePV(path string, pv PV) Error {
 // ReadHistory retrieves the history of a data point. The times of the
 // returned entries must be in ascending order. VEAP-Protocol: HTTP-GET on
 // history (.../~hist)
-func (c *Client) ReadHistory(path string, begin time.Time, end time.Time, limit int64) ([]PV, Error) {
+func (c *Client) ReadHistory(path string, begin time.Time, end time.Time, limit int64) ([]veap.PV, veap.Error) {
 	// move timestamps to next millisecond
 	begin = begin.Add(999999 * time.Nanosecond).Truncate(time.Millisecond)
 	end = end.Add(999999 * time.Nanosecond).Truncate(time.Millisecond)
@@ -131,21 +133,21 @@ func (c *Client) ReadHistory(path string, begin time.Time, end time.Time, limit 
 	beginParam := strconv.FormatInt(begin.UnixNano()/1000000, 10)
 	endParam := strconv.FormatInt(end.UnixNano()/1000000, 10)
 	limitParam := strconv.FormatInt(limit, 10)
-	url := c.URL + path + "/" + histMarker + "?begin=" + beginParam + "&end=" + endParam + "&limit=" + limitParam
+	url := c.URL + path + "/" + veap.HistMarker + "?begin=" + beginParam + "&end=" + endParam + "&limit=" + limitParam
 	c.Log.Debugf("Sending HTTP-GET request to %s", url)
 
 	// do request
 	resp, err := c.Client.Get(url)
 	if err != nil {
-		return nil, NewErrorf(StatusClientError, "HTTP-GET on %s failed: %v", url, err)
+		return nil, veap.NewErrorf(veap.StatusClientError, "HTTP-GET on %s failed: %v", url, err)
 	}
 	defer resp.Body.Close()
 	respBytes, err := c.readLimited(resp.Body)
 	if err != nil {
-		return nil, NewError(StatusClientError, err)
+		return nil, veap.NewError(veap.StatusClientError, err)
 	}
-	if resp.StatusCode != StatusOK {
-		return nil, NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+	if resp.StatusCode != veap.StatusOK {
+		return nil, veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
 			resp.StatusCode, string(respBytes))
 	}
 
@@ -155,14 +157,14 @@ func (c *Client) ReadHistory(path string, begin time.Time, end time.Time, limit 
 	}
 
 	// convert JSON to history
-	var w wireHist
+	var w encoding.WireHist
 	err = json.Unmarshal(respBytes, &w)
 	if err != nil {
-		return nil, NewErrorf(StatusClientError, "Conversion of JSON to history failed: %v", err)
+		return nil, veap.NewErrorf(veap.StatusClientError, "Conversion of JSON to history failed: %v", err)
 	}
-	hist, err := wireToHist(w)
+	hist, err := encoding.WireToHist(w)
 	if err != nil {
-		return nil, NewErrorf(StatusClientError, "%v", err)
+		return nil, veap.NewErrorf(veap.StatusClientError, "%v", err)
 	}
 	return hist, nil
 }
@@ -170,13 +172,13 @@ func (c *Client) ReadHistory(path string, begin time.Time, end time.Time, limit 
 // WriteHistory replaces the history of a data point. The replaced time
 // range goes from the minimum timestamp to the maximum timestamp.
 // VEAP-Protocol: HTTP-PUT on history (.../~hist)
-func (c *Client) WriteHistory(path string, timeSeries []PV) Error {
+func (c *Client) WriteHistory(path string, timeSeries []veap.PV) veap.Error {
 	// convert history to JSON
-	url := c.URL + path + "/" + histMarker
+	url := c.URL + path + "/" + veap.HistMarker
 	c.Log.Debugf("Sending HTTP-PUT request to %s", url)
-	reqBytes, err := json.Marshal(histToWire(timeSeries))
+	reqBytes, err := json.Marshal(encoding.HistToWire(timeSeries))
 	if err != nil {
-		return NewErrorf(StatusClientError, "Conversion of history to JSON failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "Conversion of history to JSON failed: %v", err)
 	}
 
 	// log request
@@ -188,18 +190,18 @@ func (c *Client) WriteHistory(path string, timeSeries []PV) Error {
 	buf := bytes.NewBuffer(reqBytes)
 	req, err := http.NewRequest(http.MethodPut, url, buf)
 	if err != nil {
-		return NewErrorf(StatusClientError, "Creating HTTP-PUT request failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "Creating HTTP-PUT request failed: %v", err)
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return NewErrorf(StatusClientError, "HTTP-PUT request failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "HTTP-PUT request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	// check result
-	if resp.StatusCode != StatusOK {
+	if resp.StatusCode != veap.StatusOK {
 		respBytes, _ := c.readLimited(resp.Body)
-		return NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+		return veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
 			resp.StatusCode, string(respBytes))
 	}
 	return nil
@@ -208,21 +210,21 @@ func (c *Client) WriteHistory(path string, timeSeries []PV) Error {
 // ReadProperties returns the attributes and links of a VEAP object.
 // Attribute values must be supported by package json. VEAP-Protocol:
 // HTTP-GET on object
-func (c *Client) ReadProperties(path string) (AttrValues, []Link, Error) {
+func (c *Client) ReadProperties(path string) (veap.AttrValues, []veap.Link, veap.Error) {
 	// do request
 	url := c.URL + path
 	c.Log.Debugf("Sending HTTP-GET request to %s", url)
 	resp, err := c.Client.Get(url)
 	if err != nil {
-		return nil, nil, NewErrorf(StatusClientError, "HTTP-GET on %s failed: %v", url, err)
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "HTTP-GET on %s failed: %v", url, err)
 	}
 	defer resp.Body.Close()
 	respBytes, err := c.readLimited(resp.Body)
 	if err != nil {
-		return nil, nil, NewError(StatusClientError, err)
+		return nil, nil, veap.NewError(veap.StatusClientError, err)
 	}
-	if resp.StatusCode != StatusOK {
-		return nil, nil, NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+	if resp.StatusCode != veap.StatusOK {
+		return nil, nil, veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
 			resp.StatusCode, string(respBytes))
 	}
 
@@ -235,27 +237,27 @@ func (c *Client) ReadProperties(path string) (AttrValues, []Link, Error) {
 	var attr map[string]interface{}
 	err = json.Unmarshal(respBytes, &attr)
 	if err != nil {
-		return nil, nil, NewErrorf(StatusClientError, "Invalid JSON object: %v", err)
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "Invalid JSON object: %v", err)
 	}
 
 	// extract ~links
-	var links []Link
+	var links []veap.Link
 	query := any.Q(attr)
 	mqattr := query.Map() // can't fail
-	for _, qlink := range mqattr.TryKey(linksMarker).Slice() {
+	for _, qlink := range mqattr.TryKey(veap.LinksMarker).Slice() {
 		mqlink := qlink.Map()
-		links = append(links, Link{
+		links = append(links, veap.Link{
 			Role:   mqlink.TryKey("rel").String(),
 			Target: mqlink.TryKey("href").String(),
 			Title:  mqlink.TryKey("title").String(),
 		})
 	}
 	if query.Err() != nil {
-		return nil, nil, NewErrorf(StatusClientError, "Invalid ~links property: %v", query.Err())
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "Invalid ~links property: %v", query.Err())
 	}
 
 	// remove ~links to get remaining attributes
-	delete(attr, linksMarker)
+	delete(attr, veap.LinksMarker)
 
 	return attr, links, nil
 }
@@ -264,13 +266,13 @@ func (c *Client) ReadProperties(path string) (AttrValues, []Link, Error) {
 // object exists at the specified path, a new object is created. Links are
 // intentionally not handled. (A concept is still pending.) Attributes were
 // unmarshalled with package json. VEAP-Protocol: HTTP-PUT on object
-func (c *Client) WriteProperties(path string, attributes AttrValues) (bool, Error) {
+func (c *Client) WriteProperties(path string, attributes veap.AttrValues) (bool, veap.Error) {
 	// convert attributes to JSON
 	url := c.URL + path
 	c.Log.Debugf("Sending HTTP-PUT request to %s", url)
 	reqBytes, err := json.Marshal(attributes)
 	if err != nil {
-		return false, NewErrorf(StatusBadRequest, "Conversion of attributes to JSON failed: %v", err)
+		return false, veap.NewErrorf(veap.StatusBadRequest, "Conversion of attributes to JSON failed: %v", err)
 	}
 
 	// log request
@@ -282,43 +284,43 @@ func (c *Client) WriteProperties(path string, attributes AttrValues) (bool, Erro
 	reqReader := bytes.NewBuffer(reqBytes)
 	req, err := http.NewRequest(http.MethodPut, url, reqReader)
 	if err != nil {
-		return false, NewErrorf(StatusClientError, "Creating HTTP-PUT request failed: %v", err)
+		return false, veap.NewErrorf(veap.StatusClientError, "Creating HTTP-PUT request failed: %v", err)
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return false, NewErrorf(StatusClientError, "HTTP-PUT request failed: %v", err)
+		return false, veap.NewErrorf(veap.StatusClientError, "HTTP-PUT request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	// check result
-	if resp.StatusCode != StatusOK && resp.StatusCode != StatusCreated {
+	if resp.StatusCode != veap.StatusOK && resp.StatusCode != veap.StatusCreated {
 		respBytes, _ := c.readLimited(resp.Body)
-		return false, NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+		return false, veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
 			resp.StatusCode, string(respBytes))
 	}
-	return resp.StatusCode == StatusCreated, nil
+	return resp.StatusCode == veap.StatusCreated, nil
 }
 
 // Delete destroys a VEAP object. VEAP-Protocol: HTTP-DELETE on object
-func (c *Client) Delete(path string) Error {
+func (c *Client) Delete(path string) veap.Error {
 	// do request
 	url := c.URL + path
 	c.Log.Debugf("Sending HTTP-DELETE request to %s", url)
 	reqReader := &bytes.Buffer{}
 	req, err := http.NewRequest(http.MethodDelete, url, reqReader)
 	if err != nil {
-		return NewErrorf(StatusClientError, "Creating HTTP-DELETE request failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "Creating HTTP-DELETE request failed: %v", err)
 	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
-		return NewErrorf(StatusClientError, "HTTP-DELETE request failed: %v", err)
+		return veap.NewErrorf(veap.StatusClientError, "HTTP-DELETE request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	// check result
-	if resp.StatusCode != StatusOK {
+	if resp.StatusCode != veap.StatusOK {
 		respBytes, _ := c.readLimited(resp.Body)
-		return NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+		return veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
 			resp.StatusCode, string(respBytes))
 	}
 	return nil

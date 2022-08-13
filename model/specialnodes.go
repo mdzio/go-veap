@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mdzio/go-veap"
+	"github.com/mdzio/go-veap/server"
 )
 
 // VendorCfg configures a ~vendor object.
@@ -42,7 +43,7 @@ func NewVendor(c *VendorCfg) *Domain {
 }
 
 // NewHandlerStats creates a model adapter for veap.HandlerStats.
-func NewHandlerStats(col ChangeableCollection, handlerStats *veap.HandlerStats) *Domain {
+func NewHandlerStats(col ChangeableCollection, handlerStats *server.HandlerStats) *Domain {
 	domain := &Domain{
 		BasicObject: BasicObject{
 			Identifier:  "statistics",

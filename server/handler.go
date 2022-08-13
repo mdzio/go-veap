@@ -1,9 +1,7 @@
-package veap
+package server
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -15,17 +13,11 @@ import (
 	"time"
 
 	"github.com/mdzio/go-logging"
+	"github.com/mdzio/go-veap"
+	"github.com/mdzio/go-veap/encoding"
 )
 
 const (
-	// service markers
-	pvMarker      = "~pv"
-	histMarker    = "~hist"
-	exgDataMarker = "~exgdata"
-
-	// property markers
-	linksMarker = "~links"
-
 	// default max. size of a valid request: 1 MB
 	defaultRequestSizeLimit = 1 * 1024 * 1024
 
@@ -56,7 +48,7 @@ type HandlerStats struct {
 // Handler transforms HTTP requests to VEAP service requests.
 type Handler struct {
 	// Service is VEAP service provider for processing the requests.
-	Service
+	veap.Service
 
 	// URLPrefix must be set, if the VEAP tree starts not at root.
 	URLPrefix string
@@ -81,7 +73,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 	// remove prefix
 	fullPath := request.URL.EscapedPath()
 	if !strings.HasPrefix(fullPath, h.URLPrefix) {
-		h.errorResponse(respWriter, request, StatusNotFound, "URL prefix does not match: %s", request.URL.Path)
+		h.errorResponse(respWriter, request, veap.StatusNotFound, "URL prefix does not match: %s", request.URL.Path)
 		return
 	}
 	fullPath = strings.TrimPrefix(fullPath, h.URLPrefix)
@@ -90,7 +82,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 	reqLimitReader := http.MaxBytesReader(respWriter, request.Body, h.requestSizeLimit())
 	reqBytes, err := ioutil.ReadAll(reqLimitReader)
 	if err != nil {
-		h.errorResponse(respWriter, request, StatusBadRequest, "Receiving of request failed: %v", err)
+		h.errorResponse(respWriter, request, veap.StatusBadRequest, "Receiving of request failed: %v", err)
 		return
 	}
 
@@ -109,7 +101,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 	base := path.Base(fullPath)
 	switch base {
 
-	case pvMarker:
+	case veap.PVMarker:
 		switch request.Method {
 		case http.MethodGet:
 			qvs := request.URL.Query()
@@ -126,35 +118,48 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 		case http.MethodPut:
 			err = h.serveSetPV(path.Dir(fullPath), reqBytes, false /* no fuzzy parsing */)
 		default:
-			h.errorResponse(respWriter, request, StatusMethodNotAllowed,
+			h.errorResponse(respWriter, request, veap.StatusMethodNotAllowed,
 				"Method %s not allowed for PV %s", request.Method, fullPath)
 			return
 		}
 
-	case histMarker:
+	case veap.HistMarker:
 		switch request.Method {
 		case http.MethodGet:
 			respBytes, err = h.serveHistory(path.Dir(fullPath), request.URL.Query())
 		case http.MethodPut:
 			err = h.serveSetHistory(path.Dir(fullPath), reqBytes)
 		default:
-			h.errorResponse(respWriter, request, StatusMethodNotAllowed,
+			h.errorResponse(respWriter, request, veap.StatusMethodNotAllowed,
 				"Method %s not allowed for history %s", request.Method, fullPath)
 			return
 		}
 
-	case exgDataMarker:
+	case veap.ExgDataMarker:
 		if request.Method != http.MethodPut {
-			h.errorResponse(respWriter, request, StatusMethodNotAllowed,
+			h.errorResponse(respWriter, request, veap.StatusMethodNotAllowed,
 				"Invalid method for ExgData service: %s", request.Method)
 			return
 		}
-		if fullPath != "/"+exgDataMarker {
-			h.errorResponse(respWriter, request, StatusNotFound,
+		if fullPath != "/"+veap.ExgDataMarker {
+			h.errorResponse(respWriter, request, veap.StatusNotFound,
 				"Invalid path for ExgData service: %s", fullPath)
 			return
 		}
 		respBytes, err = h.serveExgData(reqBytes)
+
+	case veap.QueryMarker:
+		if request.Method != http.MethodGet {
+			h.errorResponse(respWriter, request, veap.StatusMethodNotAllowed,
+				"Invalid method for Query service: %s", request.Method)
+			return
+		}
+		if fullPath != "/"+veap.QueryMarker {
+			h.errorResponse(respWriter, request, veap.StatusNotFound,
+				"Invalid path for Query service: %s", fullPath)
+			return
+		}
+		respBytes, err = h.serveQuery(request.URL.Query())
 
 	default:
 		switch request.Method {
@@ -169,7 +174,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 		case http.MethodDelete:
 			err = h.serveDelete(fullPath)
 		default:
-			h.errorResponse(respWriter, request, StatusMethodNotAllowed,
+			h.errorResponse(respWriter, request, veap.StatusMethodNotAllowed,
 				"Method %s not allowed for %s", request.Method, fullPath)
 			return
 		}
@@ -177,7 +182,7 @@ func (h *Handler) ServeHTTP(respWriter http.ResponseWriter, request *http.Reques
 
 	// send error response
 	if err != nil {
-		if svcErr, ok := err.(Error); ok {
+		if svcErr, ok := err.(veap.Error); ok {
 			respCode = svcErr.Code()
 		} else {
 			respCode = http.StatusInternalServerError
@@ -252,7 +257,7 @@ func (h *Handler) servePV(path string, format string) ([]byte, string, error) {
 	}
 
 	// default format: convert PV to JSON
-	b, err := json.Marshal(pvToWire(pv))
+	b, err := json.Marshal(encoding.PVToWire(pv))
 	if err != nil {
 		return nil, "", fmt.Errorf("Conversion of PV to JSON failed: %v", err)
 	}
@@ -261,9 +266,9 @@ func (h *Handler) servePV(path string, format string) ([]byte, string, error) {
 
 func (h *Handler) serveSetPV(path string, b []byte, fuzzy bool) error {
 	// convert JSON to PV
-	pv, err := bytesToPV(b, fuzzy)
+	pv, err := encoding.BytesToPV(b, fuzzy)
 	if err != nil {
-		return NewErrorf(StatusBadRequest, "Conversion of JSON to PV failed: %v", err)
+		return veap.NewErrorf(veap.StatusBadRequest, "Conversion of JSON to PV failed: %v", err)
 	}
 
 	// invoke service
@@ -297,7 +302,7 @@ func (h *Handler) serveHistory(path string, params url.Values) ([]byte, error) {
 		} else {
 			p = "begin"
 		}
-		return nil, NewErrorf(StatusBadRequest, "Missing request parameter: %s", p)
+		return nil, veap.NewErrorf(veap.StatusBadRequest, "Missing request parameter: %s", p)
 	}
 	limit, err := parseIntParam(params, "limit")
 	if err != nil {
@@ -321,7 +326,7 @@ func (h *Handler) serveHistory(path string, params url.Values) ([]byte, error) {
 	}
 
 	// convert history to JSON
-	b, err := json.Marshal(histToWire(hist))
+	b, err := json.Marshal(encoding.HistToWire(hist))
 	if err != nil {
 		return nil, fmt.Errorf("Conversion of history to JSON failed: %v", err)
 	}
@@ -330,14 +335,14 @@ func (h *Handler) serveHistory(path string, params url.Values) ([]byte, error) {
 
 func (h *Handler) serveSetHistory(path string, reqBytes []byte) error {
 	// convert JSON to history
-	var w wireHist
+	var w encoding.WireHist
 	err := json.Unmarshal(reqBytes, &w)
 	if err != nil {
-		return NewErrorf(StatusBadRequest, "Conversion of JSON to history failed: %v", err)
+		return veap.NewErrorf(veap.StatusBadRequest, "Conversion of JSON to history failed: %v", err)
 	}
 
 	// invoke service
-	hist, err := wireToHist(w)
+	hist, err := encoding.WireToHist(w)
 	if err != nil {
 		return err
 	}
@@ -359,20 +364,20 @@ func (h *Handler) serveProperties(objPath string) ([]byte, error) {
 
 	// add ~links property
 	if len(links) > 0 {
-		wireLinks := make([]wireLink, len(links))
+		wireLinks := make([]encoding.WireLink, len(links))
 		for i, l := range links {
 			// modify absolute paths
 			p := l.Target
 			if path.IsAbs(p) {
 				p = h.URLPrefix + p
 			}
-			wireLinks[i] = wireLink{
-				l.Role,
-				p,
-				l.Title,
+			wireLinks[i] = encoding.WireLink{
+				Role:   l.Role,
+				Target: p,
+				Title:  l.Title,
 			}
 		}
-		wireAttr[linksMarker] = wireLinks
+		wireAttr[veap.LinksMarker] = wireLinks
 	}
 
 	// convert properties to JSON
@@ -388,7 +393,7 @@ func (h *Handler) serveSetProperties(path string, reqBytes []byte) (bool, error)
 	var attr map[string]interface{}
 	err := json.Unmarshal(reqBytes, &attr)
 	if err != nil {
-		return false, NewErrorf(StatusBadRequest, "Conversion of JSON to attributes failed: %v", err)
+		return false, veap.NewErrorf(veap.StatusBadRequest, "Conversion of JSON to attributes failed: %v", err)
 	}
 
 	// invoke service
@@ -402,20 +407,20 @@ func (h *Handler) serveDelete(path string) error {
 
 func (h *Handler) serveExgData(reqBytes []byte) (respBytes []byte, serviceErr error) {
 	// service provided?
-	ms, ok := h.Service.(MetaService)
+	ms, ok := h.Service.(veap.MetaService)
 	if !ok {
-		serviceErr = NewErrorf(StatusBadRequest, "ExgData service not implemented")
+		serviceErr = veap.NewErrorf(veap.StatusBadRequest, "ExgData service not implemented")
 		return
 	}
 
 	// decode params
-	var wireParams wireExgDataParams
+	var wireParams encoding.WireExgDataParams
 	err := json.Unmarshal(reqBytes, &wireParams)
 	if err != nil {
-		serviceErr = NewErrorf(StatusBadRequest, "Invalid JSON for ExgData parameters: %v", err)
+		serviceErr = veap.NewErrorf(veap.StatusBadRequest, "Invalid JSON for ExgData parameters: %v", err)
 		return
 	}
-	writePVs, readPaths := wireToExgDataParams(&wireParams)
+	writePVs, readPaths := encoding.WireToExgDataParams(&wireParams)
 
 	// call service
 	writeErrors, readResults, serviceErr := ms.ExgData(writePVs, readPaths)
@@ -424,10 +429,82 @@ func (h *Handler) serveExgData(reqBytes []byte) (respBytes []byte, serviceErr er
 	}
 
 	// encode results
-	wireResult := exgDataResultsToWire(writeErrors, readResults)
+	wireResult := encoding.ExgDataResultsToWire(writeErrors, readResults)
 	respBytes, err = json.Marshal(wireResult)
 	if err != nil {
-		serviceErr = NewErrorf(StatusInternalServerError, "Conversion of ExgData results to JSON failed: %v", err)
+		serviceErr = veap.NewErrorf(veap.StatusInternalServerError, "Conversion of ExgData results to JSON failed: %v", err)
+		return
+	}
+	return
+}
+
+// The ~path URL parameter specifies a path mask (e.g. ~path=/device/*/*). This
+// parameter must be specified at least once.
+func (h *Handler) serveQuery(parameters url.Values) (respBytes []byte, serviceErr error) {
+	// service provided?
+	ms, ok := h.Service.(veap.MetaService)
+	if !ok {
+		serviceErr = veap.NewErrorf(veap.StatusBadRequest, "Query service not implemented")
+		return
+	}
+
+	// extract paths and remove URL prefix
+	paths := make([]string, 0)
+	for _, fullPath := range parameters[veap.PathMarker] {
+		if !strings.HasPrefix(fullPath, h.URLPrefix) {
+			return nil, veap.NewErrorf(veap.StatusNotFound, "Path prefix does not match: %s", fullPath)
+		}
+		paths = append(paths, strings.TrimPrefix(fullPath, h.URLPrefix))
+	}
+
+	// call service
+	queryResults, serviceErr := ms.Query(paths)
+	if serviceErr != nil {
+		return
+	}
+
+	// encode results
+	wireResult := make([]map[string]interface{}, len(queryResults))
+	for idx := range queryResults {
+
+		// copy attributes
+		wireAttr := make(map[string]interface{})
+		for k, v := range queryResults[idx].Attributes {
+			wireAttr[k] = v
+		}
+
+		// add ~links property
+		if len(queryResults[idx].Links) > 0 {
+			wireLinks := make([]encoding.WireLink, len(queryResults[idx].Links))
+			for i, l := range queryResults[idx].Links {
+				// modify absolute paths
+				p := l.Target
+				if path.IsAbs(p) {
+					p = h.URLPrefix + p
+				}
+				wireLinks[i] = encoding.WireLink{
+					Role:   l.Role,
+					Target: p,
+					Title:  l.Title,
+				}
+			}
+			wireAttr[veap.LinksMarker] = wireLinks
+		}
+
+		// add ~path property
+		p := queryResults[idx].Path
+		// modify absolute paths
+		if path.IsAbs(p) {
+			p = h.URLPrefix + p
+		}
+		wireAttr[veap.PathMarker] = p
+
+		// add to result
+		wireResult[idx] = wireAttr
+	}
+	respBytes, err := json.Marshal(wireResult)
+	if err != nil {
+		serviceErr = veap.NewErrorf(veap.StatusInternalServerError, "Conversion of Query results to JSON failed: %v", err)
 		return
 	}
 	return
@@ -453,12 +530,12 @@ func parseIntParam(params url.Values, name string) (*int64, error) {
 		return nil, nil
 	}
 	if len(values) != 1 {
-		return nil, NewErrorf(StatusBadRequest, "Invalid request parameter: %s", name)
+		return nil, veap.NewErrorf(veap.StatusBadRequest, "Invalid request parameter: %s", name)
 	}
 	txt := values[0]
 	i, err := strconv.ParseInt(txt, 10, 64)
 	if err != nil {
-		return nil, NewErrorf(StatusBadRequest, "Invalid request parameter %s: %v", name, err)
+		return nil, veap.NewErrorf(veap.StatusBadRequest, "Invalid request parameter %s: %v", name, err)
 	}
 	return &i, nil
 }
@@ -473,190 +550,4 @@ func parseTimeParam(params url.Values, name string) (*time.Time, error) {
 	}
 	t := time.Unix(0, (*i)*1000000)
 	return &t, nil
-}
-
-type wirePV struct {
-	Time  int64       `json:"ts"`
-	Value interface{} `json:"v"`
-	State State       `json:"s"`
-}
-
-var errUnexpectetContent = errors.New("Unexpectet content")
-
-func bytesToPV(payload []byte, fuzzy bool) (PV, error) {
-	// try to convert JSON to wirePV
-	var w wirePV
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	dec.DisallowUnknownFields()
-	err := dec.Decode(&w)
-	if err == nil {
-		// check for unexpected content
-		c, err2 := ioutil.ReadAll(dec.Buffered())
-		if err2 != nil {
-			return PV{}, fmt.Errorf("ReadAll failed: %w", err2)
-		}
-		// allow only white space
-		cs := strings.TrimSpace(string(c))
-		if len(cs) != 0 {
-			err = errUnexpectetContent
-		}
-	}
-
-	// parsing failed?
-	if err != nil {
-		// if not fuzzy mode, return error
-		if !fuzzy {
-			return PV{}, err
-		}
-		// take whole payload as JSON value
-		var v interface{}
-		err = json.Unmarshal(payload, &v)
-		if err == nil {
-			w = wirePV{Value: v}
-		} else {
-			// if no valid JSON content is found, use the whole payload as string
-			w = wirePV{Value: string(payload)}
-		}
-	}
-
-	// if no timestamp is provided, use current time
-	var ts time.Time
-	if w.Time == 0 {
-		ts = time.Now()
-	} else {
-		ts = time.Unix(0, w.Time*1000000)
-	}
-
-	// if no state is provided, state is implicit GOOD
-	return PV{
-		Time:  ts,
-		Value: w.Value,
-		State: w.State,
-	}, nil
-}
-
-func wireToPV(wirePV wirePV) PV {
-	// if no timestamp is provided, use current time
-	var ts time.Time
-	if wirePV.Time == 0 {
-		ts = time.Now()
-	} else {
-		ts = time.Unix(0, wirePV.Time*1000000)
-	}
-
-	// if no state is provided, state is implicit GOOD
-	return PV{
-		Time:  ts,
-		Value: wirePV.Value,
-		State: wirePV.State,
-	}
-}
-
-func pvToWire(pv PV) wirePV {
-	return wirePV{
-		Time:  pv.Time.UnixNano() / 1000000,
-		Value: pv.Value,
-		State: pv.State,
-	}
-}
-
-type wireHist struct {
-	Times  []int64       `json:"ts"`
-	Values []interface{} `json:"v"`
-	States []State       `json:"s"`
-}
-
-func histToWire(hist []PV) wireHist {
-	w := wireHist{}
-	w.Times = make([]int64, len(hist))
-	w.Values = make([]interface{}, len(hist))
-	w.States = make([]State, len(hist))
-	for i, e := range hist {
-		w.Times[i] = e.Time.UnixNano() / 1000000
-		w.Values[i] = e.Value
-		w.States[i] = e.State
-	}
-	return w
-}
-
-func wireToHist(w wireHist) ([]PV, error) {
-	l := len(w.Times)
-	if len(w.Values) != l || len(w.States) != l {
-		return nil, NewErrorf(StatusBadRequest, "History arrays must have same length")
-	}
-	hist := make([]PV, l)
-	for i := 0; i < l; i++ {
-		hist[i] = PV{
-			time.Unix(0, w.Times[i]*1000000),
-			w.Values[i],
-			w.States[i],
-		}
-	}
-	return hist, nil
-}
-
-type wireLink struct {
-	Role   string `json:"rel"`
-	Target string `json:"href"`
-	Title  string `json:"title,omitempty"`
-}
-
-type wireError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message,omitempty"`
-}
-
-func errorToWire(err Error) *wireError {
-	if err == nil {
-		return nil
-	}
-	return &wireError{err.Code(), err.Error()}
-}
-
-type wireWritePVParam struct {
-	Path string `json:"path"`
-	PV   wirePV `json:"pv"`
-}
-
-type wireExgDataParams struct {
-	WritePVs  []wireWritePVParam `json:"writePVs"`
-	ReadPaths []string           `json:"readPaths"`
-}
-
-type wireReadPVResult struct {
-	PV    *wirePV    `json:"pv,omitempty"`
-	Error *wireError `json:"error,omitempty"`
-}
-
-type wireExgDataResults struct {
-	WriteErrors []*wireError       `json:"writeErrors"`
-	ReadResults []wireReadPVResult `json:"readResults"`
-}
-
-func wireToExgDataParams(w *wireExgDataParams) (writePVs []WritePVParam, readPaths []string) {
-	writePVs = make([]WritePVParam, len(w.WritePVs))
-	for i := range w.WritePVs {
-		writePVs[i].Path = w.WritePVs[i].Path
-		writePVs[i].PV = wireToPV(w.WritePVs[i].PV)
-	}
-	readPaths = w.ReadPaths
-	return
-}
-
-func exgDataResultsToWire(writeErrors []Error, readResults []ReadPVResult) *wireExgDataResults {
-	w := &wireExgDataResults{}
-	w.WriteErrors = make([]*wireError, len(writeErrors))
-	for i := range writeErrors {
-		w.WriteErrors[i] = errorToWire(writeErrors[i])
-	}
-	w.ReadResults = make([]wireReadPVResult, len(readResults))
-	for i := range readResults {
-		if err := readResults[i].Error; err != nil {
-			w.ReadResults[i].Error = errorToWire(err)
-		} else {
-			wpv := pvToWire(readResults[i].PV)
-			w.ReadResults[i].PV = &wpv
-		}
-	}
-	return w
 }

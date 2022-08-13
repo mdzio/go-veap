@@ -1,4 +1,4 @@
-package veap
+package server
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mdzio/go-logging"
+	"github.com/mdzio/go-veap"
 )
 
 func init() {
@@ -18,58 +19,58 @@ func init() {
 }
 func TestHandlerPV(t *testing.T) {
 	cases := []struct {
-		pvIn       PV
-		svcErrIn   Error
+		pvIn       veap.PV
+		svcErrIn   veap.Error
 		typeWanted string
 		textWanted string
 		codeWanted int
 	}{
 		{
-			PV{},
-			NewErrorf(StatusForbidden, "error message 1"),
+			veap.PV{},
+			veap.NewErrorf(veap.StatusForbidden, "error message 1"),
 			"application/json",
 			`{"message":"error message 1"}`,
-			StatusForbidden,
+			veap.StatusForbidden,
 		},
 		{
-			PV{
-				time.Unix(1, 234567891),
-				123.456,
-				42,
+			veap.PV{
+				Time:  time.Unix(1, 234567891),
+				Value: 123.456,
+				State: 42,
 			},
 			nil,
 			"application/json",
 			`{"ts":1234,"v":123.456,"s":42}`,
-			StatusOK,
+			veap.StatusOK,
 		},
 		{
-			PV{
-				time.Unix(3, 0),
-				"Hello World!",
-				21,
+			veap.PV{
+				Time:  time.Unix(3, 0),
+				Value: "Hello World!",
+				State: 21,
 			},
 			nil,
 			"application/json",
 			`{"ts":3000,"v":"Hello World!","s":21}`,
-			StatusOK,
+			veap.StatusOK,
 		},
 		{
-			PV{
-				time.Unix(123, 0),
-				[]int{1, 2, 3},
-				200,
+			veap.PV{
+				Time:  time.Unix(123, 0),
+				Value: []int{1, 2, 3},
+				State: 200,
 			},
 			nil,
 			"application/json",
 			`{"ts":123000,"v":[1,2,3],"s":200}`,
-			StatusOK,
+			veap.StatusOK,
 		},
 	}
 
-	var pvIn PV
-	var svcErrIn Error
-	svc := FuncService{
-		ReadPVFunc: func(path string) (PV, Error) { return pvIn, svcErrIn },
+	var pvIn veap.PV
+	var svcErrIn veap.Error
+	svc := veap.FuncService{
+		ReadPVFunc: func(path string) (veap.PV, veap.Error) { return pvIn, svcErrIn },
 	}
 	h := &Handler{Service: &svc}
 	srv := httptest.NewServer(h)
@@ -102,8 +103,8 @@ func TestHandlerPV(t *testing.T) {
 func TestHandlerSetPV(t *testing.T) {
 	cases := []struct {
 		pvIn       string
-		svcErrIn   Error
-		pvWanted   PV
+		svcErrIn   veap.Error
+		pvWanted   veap.PV
 		typeWanted string
 		textWanted string
 		codeWanted int
@@ -111,53 +112,53 @@ func TestHandlerSetPV(t *testing.T) {
 		{
 			`{"ts":1234,"v":`,
 			nil,
-			PV{},
+			veap.PV{},
 			"application/json",
-			`{"message":"Conversion of JSON to PV failed: unexpected end of JSON input"}`,
-			StatusBadRequest,
+			`{"message":"Conversion of JSON to PV failed: unexpected EOF"}`,
+			veap.StatusBadRequest,
 		},
 		{
 			`{"ts":1234,"v":123.456,"s":42}`,
 			nil,
-			PV{
-				time.Unix(1, 234000000),
-				123.456,
-				42,
+			veap.PV{
+				Time:  time.Unix(1, 234000000),
+				Value: 123.456,
+				State: 42,
 			},
 			"application/json",
 			"",
-			StatusOK,
+			veap.StatusOK,
 		},
 		{
 			`{"ts":1234,"v":["a","b","c"],"s":21}`,
 			nil,
-			PV{
-				time.Unix(1, 234000000),
-				[]interface{}{"a", "b", "c"},
-				21,
+			veap.PV{
+				Time:  time.Unix(1, 234000000),
+				Value: []interface{}{"a", "b", "c"},
+				State: 21,
 			},
 			"application/json",
 			"",
-			StatusOK,
+			veap.StatusOK,
 		},
 		{
 			`{"ts":1,"v":true,"s":0}`,
-			NewErrorf(StatusForbidden, "no access"),
-			PV{
-				time.Unix(0, 1000000),
-				true,
-				0,
+			veap.NewErrorf(veap.StatusForbidden, "no access"),
+			veap.PV{
+				Time:  time.Unix(0, 1000000),
+				Value: true,
+				State: 0,
 			},
 			"application/json",
 			`{"message":"no access"}`,
-			StatusForbidden,
+			veap.StatusForbidden,
 		},
 	}
 
-	var pvOut PV
-	var svcErrIn Error
-	svc := FuncService{
-		WritePVFunc: func(path string, pv PV) Error {
+	var pvOut veap.PV
+	var svcErrIn veap.Error
+	svc := veap.FuncService{
+		WritePVFunc: func(path string, pv veap.PV) veap.Error {
 			pvOut = pv
 			return svcErrIn
 		},
@@ -202,7 +203,7 @@ func TestHandlerSetPV(t *testing.T) {
 
 func TestHandlerHistory(t *testing.T) {
 	cases := []struct {
-		histIn     []PV
+		histIn     []veap.PV
 		histWanted string
 	}{
 		{
@@ -210,20 +211,20 @@ func TestHandlerHistory(t *testing.T) {
 			`{"ts":[],"v":[],"s":[]}`,
 		},
 		{
-			[]PV{
-				{time.Unix(0, 1000000), 3.0, 5},
-				{time.Unix(0, 2000000), 4.0, 6},
+			[]veap.PV{
+				{Time: time.Unix(0, 1000000), Value: 3.0, State: 5},
+				{Time: time.Unix(0, 2000000), Value: 4.0, State: 6},
 			},
 			`{"ts":[1,2],"v":[3,4],"s":[5,6]}`,
 		},
 	}
 
-	var histIn []PV
+	var histIn []veap.PV
 	var pathOut string
 	var beginOut, endOut time.Time
 	var limitOut int64
-	svc := FuncService{
-		ReadHistoryFunc: func(path string, begin time.Time, end time.Time, limit int64) ([]PV, Error) {
+	svc := veap.FuncService{
+		ReadHistoryFunc: func(path string, begin time.Time, end time.Time, limit int64) ([]veap.PV, veap.Error) {
 			pathOut = path
 			beginOut = begin
 			endOut = end
@@ -255,7 +256,7 @@ func TestHandlerHistory(t *testing.T) {
 		if limitOut != 3 {
 			t.Error(limitOut)
 		}
-		if resp.StatusCode != StatusOK {
+		if resp.StatusCode != veap.StatusOK {
 			t.Error(resp.StatusCode)
 		}
 		b, _ := ioutil.ReadAll(resp.Body)
@@ -269,20 +270,20 @@ func TestHandlerHistory(t *testing.T) {
 func TestHandlerSetHistory(t *testing.T) {
 	cases := []struct {
 		histIn     string
-		histWanted []PV
+		histWanted []veap.PV
 	}{
 		{
 			`{"ts":[1,2],"v":[3,4],"s":[5,6]}`,
-			[]PV{
-				{time.Unix(0, 1000000), 3.0, 5},
-				{time.Unix(0, 2000000), 4.0, 6},
+			[]veap.PV{
+				{Time: time.Unix(0, 1000000), Value: 3.0, State: 5},
+				{Time: time.Unix(0, 2000000), Value: 4.0, State: 6},
 			},
 		},
 	}
 
-	var histOut []PV
-	svc := FuncService{
-		WriteHistoryFunc: func(path string, hist []PV) Error {
+	var histOut []veap.PV
+	svc := veap.FuncService{
+		WriteHistoryFunc: func(path string, hist []veap.PV) veap.Error {
 			histOut = hist
 			return nil
 		},
@@ -305,7 +306,7 @@ func TestHandlerSetHistory(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != StatusOK {
+		if resp.StatusCode != veap.StatusOK {
 			t.Error(resp.StatusCode)
 		}
 		b, _ := ioutil.ReadAll(resp.Body)
@@ -321,40 +322,40 @@ func TestHandlerSetHistory(t *testing.T) {
 
 func TestHandlerProperties(t *testing.T) {
 	cases := []struct {
-		propsIn    AttrValues
-		linksIn    []Link
+		propsIn    veap.AttrValues
+		linksIn    []veap.Link
 		jsonWanted string
 	}{
 		{
-			AttrValues{},
-			[]Link{},
+			veap.AttrValues{},
+			[]veap.Link{},
 			`{}`,
 		},
 		{
-			AttrValues{
+			veap.AttrValues{
 				"a": 3, "b.c": "str",
 			},
-			[]Link{
-				{"itf", "..", "Itf"},
-				{"itf", "/a/b", "B"},
+			[]veap.Link{
+				{Role: "itf", Target: "..", Title: "Itf"},
+				{Role: "itf", Target: "/a/b", Title: "B"},
 			},
 			`{"a":3,"b.c":"str","~links":[{"rel":"itf","href":"..","title":"Itf"},{"rel":"itf","href":"/veap/a/b","title":"B"}]}`,
 		},
 		{
-			AttrValues{
+			veap.AttrValues{
 				"b": false,
 			},
-			[]Link{
-				{"dp", "c", ""},
+			[]veap.Link{
+				{Role: "dp", Target: "c", Title: ""},
 			},
 			`{"b":false,"~links":[{"rel":"dp","href":"c"}]}`,
 		},
 	}
 
-	var propsIn AttrValues
-	var linksIn []Link
-	svc := FuncService{
-		ReadPropertiesFunc: func(path string) (attributes AttrValues, links []Link, err Error) {
+	var propsIn veap.AttrValues
+	var linksIn []veap.Link
+	svc := veap.FuncService{
+		ReadPropertiesFunc: func(path string) (attributes veap.AttrValues, links []veap.Link, err veap.Error) {
 			return propsIn, linksIn, nil
 		},
 	}
@@ -372,7 +373,7 @@ func TestHandlerProperties(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != StatusOK {
+		if resp.StatusCode != veap.StatusOK {
 			t.Error(resp.StatusCode)
 		}
 		ct := resp.Header.Get("Content-Type")
@@ -390,27 +391,27 @@ func TestHandlerSetProperties(t *testing.T) {
 	cases := []struct {
 		attrIn     string
 		createdIn  bool
-		attrWanted AttrValues
+		attrWanted veap.AttrValues
 		codeWanted int
 	}{
 		{
 			`{}`,
 			true,
-			AttrValues{},
-			StatusCreated,
+			veap.AttrValues{},
+			veap.StatusCreated,
 		},
 		{
 			`{"active":false}`,
 			false,
-			AttrValues{"active": false},
-			StatusOK,
+			veap.AttrValues{"active": false},
+			veap.StatusOK,
 		},
 	}
 
-	var attrOut AttrValues
+	var attrOut veap.AttrValues
 	var createdIn bool
-	svc := FuncService{
-		WritePropertiesFunc: func(path string, attributes AttrValues) (created bool, err Error) {
+	svc := veap.FuncService{
+		WritePropertiesFunc: func(path string, attributes veap.AttrValues) (created bool, err veap.Error) {
 			attrOut = attributes
 			return createdIn, nil
 		},
@@ -451,34 +452,34 @@ func TestHandlerSetProperties(t *testing.T) {
 func TestHandlerDelete(t *testing.T) {
 	cases := []struct {
 		pathIn     string
-		errIn      Error
+		errIn      veap.Error
 		codeWanted int
 		textWanted string
 	}{
 		{
 			`/a/b/c`,
 			nil,
-			StatusOK,
+			veap.StatusOK,
 			"",
 		},
 		{
 			`/a`,
-			NewErrorf(StatusNotFound, "not found"),
-			StatusNotFound,
+			veap.NewErrorf(veap.StatusNotFound, "not found"),
+			veap.StatusNotFound,
 			`{"message":"not found"}`,
 		},
 		{
 			`/%2F`,
 			nil,
-			StatusOK,
+			veap.StatusOK,
 			"",
 		},
 	}
 
 	var pathOut string
-	var errIn Error
-	svc := FuncService{
-		DeleteFunc: func(path string) Error {
+	var errIn veap.Error
+	svc := veap.FuncService{
+		DeleteFunc: func(path string) veap.Error {
 			pathOut = path
 			return errIn
 		},
@@ -516,8 +517,10 @@ func TestHandlerDelete(t *testing.T) {
 }
 
 func TestHandlerStatistics(t *testing.T) {
-	svc := FuncService{
-		ReadPVFunc: func(path string) (PV, Error) { return PV{time.Unix(1, 2), 3, 4}, nil },
+	svc := veap.FuncService{
+		ReadPVFunc: func(path string) (veap.PV, veap.Error) {
+			return veap.PV{Time: time.Unix(1, 2), Value: 3, State: 4}, nil
+		},
 	}
 	h := &Handler{Service: &svc}
 	srv := httptest.NewServer(h)
@@ -594,7 +597,7 @@ func httpPUT(url, body string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != StatusOK {
+	if resp.StatusCode != veap.StatusOK {
 		return "", fmt.Errorf("Status: %d", resp.StatusCode)
 	}
 	respBody, _ := ioutil.ReadAll(resp.Body)
@@ -602,35 +605,35 @@ func httpPUT(url, body string) (string, error) {
 }
 
 func TestExgData(t *testing.T) {
-	svc := FuncService{
-		ReadPVFunc: func(path string) (PV, Error) {
+	svc := veap.FuncService{
+		ReadPVFunc: func(path string) (veap.PV, veap.Error) {
 			switch path {
 			case "/a":
-				return PV{Time: time.Unix(0, 0), Value: 1.0}, nil
+				return veap.PV{Time: time.Unix(0, 0), Value: 1.0}, nil
 			case "/b":
-				return PV{Time: time.Unix(0, 0), Value: "bbb"}, nil
+				return veap.PV{Time: time.Unix(0, 0), Value: "bbb"}, nil
 			default:
-				return PV{}, NewErrorf(StatusNotFound, "Not found: %s", path)
+				return veap.PV{}, veap.NewErrorf(veap.StatusNotFound, "Not found: %s", path)
 			}
 		},
-		WritePVFunc: func(path string, pv PV) Error {
+		WritePVFunc: func(path string, pv veap.PV) veap.Error {
 			switch path {
 			case "/a":
 				if !reflect.DeepEqual(pv.Value, 2.0) {
-					return NewErrorf(StatusBadRequest, "Invalid value for /a")
+					return veap.NewErrorf(veap.StatusBadRequest, "Invalid value for /a")
 				}
 				return nil
 			case "/b":
 				if !reflect.DeepEqual(pv.Value, "aaa") {
-					return NewErrorf(StatusBadRequest, "Invalid value for /b")
+					return veap.NewErrorf(veap.StatusBadRequest, "Invalid value for /b")
 				}
 				return nil
 			default:
-				return NewErrorf(StatusNotFound, "Not found: %s", path)
+				return veap.NewErrorf(veap.StatusNotFound, "Not found: %s", path)
 			}
 		},
 	}
-	msvc := &BasicMetaService{Service: &svc}
+	msvc := &veap.BasicMetaService{Service: &svc}
 	h := &Handler{Service: msvc}
 	srv := httptest.NewServer(h)
 	defer srv.Close()

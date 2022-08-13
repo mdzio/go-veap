@@ -130,8 +130,8 @@ func (s *Service) ReadProperties(path string) (veap.AttrValues, []veap.Link, vea
 	_, pvWriter := obj.(PVWriter)
 	if pvReader || pvWriter {
 		links = append(links, veap.Link{
-			Role:   "service",
-			Target: "~pv",
+			Role:   veap.ServiceMarker,
+			Target: veap.PVMarker,
 			Title:  "PV Service",
 		})
 	}
@@ -140,8 +140,8 @@ func (s *Service) ReadProperties(path string) (veap.AttrValues, []veap.Link, vea
 	_, historyWriter := obj.(HistoryWriter)
 	if historyReader || historyWriter {
 		links = append(links, veap.Link{
-			Role:   "service",
-			Target: "~hist",
+			Role:   veap.ServiceMarker,
+			Target: veap.HistMarker,
 			Title:  "History Service",
 		})
 	}
