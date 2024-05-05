@@ -150,6 +150,13 @@ func ErrorToWire(err veap.Error) *WireError {
 	return &WireError{err.Code(), err.Error()}
 }
 
+func WireToError(w *WireError) veap.Error {
+	if w == nil {
+		return nil
+	}
+	return veap.NewErrorf(w.Code, "%s", w.Message)
+}
+
 type WireWritePVParam struct {
 	Path string `json:"path"`
 	PV   WirePV `json:"pv"`
@@ -168,6 +175,19 @@ type WireReadPVResult struct {
 type WireExgDataResults struct {
 	WriteErrors []*WireError       `json:"writeErrors"`
 	ReadResults []WireReadPVResult `json:"readResults"`
+}
+
+func ExgDataParamsToWire(writePVs []veap.WritePVParam, readPaths []string) *WireExgDataParams {
+	w := &WireExgDataParams{}
+	w.WritePVs = make([]WireWritePVParam, len(writePVs))
+	for i := range writePVs {
+		w.WritePVs[i] = WireWritePVParam{
+			Path: writePVs[i].Path,
+			PV:   PVToWire(writePVs[i].PV),
+		}
+	}
+	w.ReadPaths = readPaths
+	return w
 }
 
 func WireToExgDataParams(w *WireExgDataParams) (writePVs []veap.WritePVParam, readPaths []string) {
@@ -196,4 +216,20 @@ func ExgDataResultsToWire(writeErrors []veap.Error, readResults []veap.ReadPVRes
 		}
 	}
 	return w
+}
+
+func WireToExgDataResults(w *WireExgDataResults) ([]veap.Error, []veap.ReadPVResult) {
+	writeErrors := make([]veap.Error, len(w.WriteErrors))
+	for i := range w.WriteErrors {
+		writeErrors[i] = WireToError(w.WriteErrors[i])
+	}
+	readResults := make([]veap.ReadPVResult, len(w.ReadResults))
+	for i := range w.ReadResults {
+		if w.ReadResults[i].Error == nil {
+			readResults[i].PV = WireToPV(*w.ReadResults[i].PV)
+		} else {
+			readResults[i].Error = WireToError(w.ReadResults[i].Error)
+		}
+	}
+	return writeErrors, readResults
 }

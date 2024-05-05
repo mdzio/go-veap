@@ -51,7 +51,7 @@ type PV struct {
 
 // Equal checks two PVs for equality.
 func (pv PV) Equal(o PV) bool {
-	if pv.Time != o.Time {
+	if !pv.Time.Equal(o.Time) {
 		return false
 	}
 	if pv.State != o.State {

@@ -1,12 +1,12 @@
-package veap
+package client
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -24,8 +24,14 @@ const (
 
 // Client forwards service calls to a remote VEAP server. It implements veap.Service.
 type Client struct {
-	// URL of the VEAP server, without a trailing slash.
+	// URL of the VEAP server, without a trailing slash (e.g.
+	// http://localhost:2121). HTTPS (default port 2122) is supported if the
+	// root certificate is installed in the operating system.
 	URL string
+
+	// HTTP basic authentication, only used if not both empty.
+	User     string
+	Password string
 
 	// ResponseSizeLimit is the maximum size of a valid response. If not set, the
 	// limit is 1 MB.
@@ -57,7 +63,14 @@ func (c *Client) ReadPV(path string) (veap.PV, veap.Error) {
 	// do request
 	url := c.URL + path + "/" + veap.PVMarker
 	c.Log.Debugf("Sending HTTP-GET request to %s", url)
-	resp, err := c.Client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return veap.PV{}, veap.NewErrorf(veap.StatusClientError, "Creating HTTP-GET request failed: %v", err)
+	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return veap.PV{}, veap.NewErrorf(veap.StatusClientError, "HTTP-GET on %s failed: %v", url, err)
 	}
@@ -106,6 +119,9 @@ func (c *Client) WritePV(path string, pv veap.PV) veap.Error {
 	if err != nil {
 		return veap.NewErrorf(veap.StatusClientError, "Creating HTTP-PUT request failed: %v", err)
 	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return veap.NewErrorf(veap.StatusClientError, "HTTP-PUT request failed: %v", err)
@@ -137,7 +153,14 @@ func (c *Client) ReadHistory(path string, begin time.Time, end time.Time, limit 
 	c.Log.Debugf("Sending HTTP-GET request to %s", url)
 
 	// do request
-	resp, err := c.Client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, veap.NewErrorf(veap.StatusClientError, "Creating HTTP-GET request failed: %v", err)
+	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, veap.NewErrorf(veap.StatusClientError, "HTTP-GET on %s failed: %v", url, err)
 	}
@@ -192,6 +215,9 @@ func (c *Client) WriteHistory(path string, timeSeries []veap.PV) veap.Error {
 	if err != nil {
 		return veap.NewErrorf(veap.StatusClientError, "Creating HTTP-PUT request failed: %v", err)
 	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return veap.NewErrorf(veap.StatusClientError, "HTTP-PUT request failed: %v", err)
@@ -214,7 +240,14 @@ func (c *Client) ReadProperties(path string) (veap.AttrValues, []veap.Link, veap
 	// do request
 	url := c.URL + path
 	c.Log.Debugf("Sending HTTP-GET request to %s", url)
-	resp, err := c.Client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "Creating HTTP-GET request failed: %v", err)
+	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, nil, veap.NewErrorf(veap.StatusClientError, "HTTP-GET on %s failed: %v", url, err)
 	}
@@ -286,6 +319,9 @@ func (c *Client) WriteProperties(path string, attributes veap.AttrValues) (bool,
 	if err != nil {
 		return false, veap.NewErrorf(veap.StatusClientError, "Creating HTTP-PUT request failed: %v", err)
 	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return false, veap.NewErrorf(veap.StatusClientError, "HTTP-PUT request failed: %v", err)
@@ -311,6 +347,9 @@ func (c *Client) Delete(path string) veap.Error {
 	if err != nil {
 		return veap.NewErrorf(veap.StatusClientError, "Creating HTTP-DELETE request failed: %v", err)
 	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return veap.NewErrorf(veap.StatusClientError, "HTTP-DELETE request failed: %v", err)
@@ -326,10 +365,147 @@ func (c *Client) Delete(path string) veap.Error {
 	return nil
 }
 
+// With ExgData multiple services can be used in one request. This is
+// recommended e.g. for networks with high latencies, for transactions or for
+// optimized requests to the target system. The services are executed in the
+// following order: WritePV, ReadPV.
+func (c *Client) ExgData(writePVs []veap.WritePVParam, readPaths []string) ([]veap.Error, []veap.ReadPVResult, veap.Error) {
+	// build URL
+	url := c.URL + "/" + veap.ExgDataMarker
+	c.Log.Debugf("Sending HTTP-PUT request to %s", url)
+
+	// request body
+	wireParams := encoding.ExgDataParamsToWire(writePVs, readPaths)
+	reqBytes, err := json.Marshal(wireParams)
+	if err != nil {
+		return nil, nil, veap.NewErrorf(veap.StatusBadRequest, "Conversion of exgdata params to JSON failed: %v", err)
+	}
+	if c.Log.TraceEnabled() {
+		c.Log.Tracef("Request body: %s", string(reqBytes))
+	}
+
+	// do request
+	reqReader := bytes.NewBuffer(reqBytes)
+	req, err := http.NewRequest(http.MethodPut, url, reqReader)
+	if err != nil {
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "Creating HTTP-PUT request failed: %v", err)
+	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "HTTP-PUT request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// read response
+	respBytes, err := c.readLimited(resp.Body)
+	if err != nil {
+		return nil, nil, veap.NewError(veap.StatusClientError, err)
+	}
+	if resp.StatusCode != veap.StatusOK {
+		return nil, nil, veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+			resp.StatusCode, string(respBytes))
+	}
+	if c.Log.TraceEnabled() {
+		c.Log.Tracef("Response body: %s", string(respBytes))
+	}
+
+	// unmarshal JSON
+	var wireResult encoding.WireExgDataResults
+	err = json.Unmarshal(respBytes, &wireResult)
+	if err != nil {
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "Invalid JSON object: %v", err)
+	}
+
+	// convert response
+	if len(wireResult.WriteErrors) != len(wireParams.WritePVs) ||
+		len(wireResult.ReadResults) != len(wireParams.ReadPaths) {
+		return nil, nil, veap.NewErrorf(veap.StatusClientError, "Exgdata response does not match request")
+	}
+	writeErrors, readResults := encoding.WireToExgDataResults(&wireResult)
+	return writeErrors, readResults, nil
+}
+
+// Query searches for VEAP objects that match any of the specified path masks.
+func (c *Client) Query(pathPatterns []string) ([]veap.QueryResult, veap.Error) {
+	// build url
+	values := url.Values{}
+	for _, value := range pathPatterns {
+		values.Add(veap.PathMarker, value)
+	}
+	url := c.URL + "/" + veap.QueryMarker + "?" + values.Encode()
+
+	// do request
+	c.Log.Debugf("Sending HTTP-GET request to %s", url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, veap.NewErrorf(veap.StatusClientError, "Creating HTTP-GET request failed: %v", err)
+	}
+	if c.User != "" || c.Password != "" {
+		req.SetBasicAuth(c.User, c.Password)
+	}
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, veap.NewErrorf(veap.StatusClientError, "HTTP-GET on %s failed: %v", url, err)
+	}
+	defer resp.Body.Close()
+	respBytes, err := c.readLimited(resp.Body)
+	if err != nil {
+		return nil, veap.NewError(veap.StatusClientError, err)
+	}
+	if resp.StatusCode != veap.StatusOK {
+		return nil, veap.NewErrorf(resp.StatusCode, "Received HTTP status: %d (%s)",
+			resp.StatusCode, string(respBytes))
+	}
+
+	// log response
+	if c.Log.TraceEnabled() {
+		c.Log.Tracef("Response body: %s", string(respBytes))
+	}
+
+	// unmarshal JSON
+	var rawResult interface{}
+	err = json.Unmarshal(respBytes, &rawResult)
+	if err != nil {
+		return nil, veap.NewErrorf(veap.StatusClientError, "Invalid JSON object: %v", err)
+	}
+
+	// convert result
+	inquirer := any.Q(rawResult)
+	rawItems := inquirer.Slice()
+	result := make([]veap.QueryResult, len(rawItems))
+	for ridx, rawItem := range rawItems {
+		item := rawItem.Map()
+		// extract ~path
+		result[ridx].Path = item.Key(veap.PathMarker).String()
+		// extract ~links
+		rawLinks := item.TryKey(veap.LinksMarker).Slice()
+		result[ridx].Links = make([]veap.Link, len(rawLinks))
+		for lidx, rawLink := range rawLinks {
+			link := rawLink.Map()
+			result[ridx].Links[lidx].Target = link.Key("href").String()
+			result[ridx].Links[lidx].Role = link.TryKey("rel").String()
+			result[ridx].Links[lidx].Title = link.TryKey("title").String()
+		}
+		// extract attributes
+		attrs := item.Unwrap()
+		// reuse existing map
+		delete(attrs, veap.PathMarker)
+		delete(attrs, veap.LinksMarker)
+		result[ridx].Attributes = attrs
+	}
+	if inquirer.Err() != nil {
+		return nil, veap.NewErrorf(veap.StatusClientError, "Malformed JSON object: %v", inquirer.Err())
+	}
+	return result, nil
+}
+
 func (c *Client) readLimited(r io.Reader) ([]byte, error) {
 	exceededLimit := c.ResponseSizeLimit + 1
 	limitReader := io.LimitReader(r, int64(exceededLimit))
-	data, _ := ioutil.ReadAll(limitReader)
+	data, _ := io.ReadAll(limitReader)
 	if len(data) == exceededLimit {
 		return nil, fmt.Errorf("Response size limit of %d bytes exceeded", c.ResponseSizeLimit)
 	}

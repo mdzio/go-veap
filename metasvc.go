@@ -98,11 +98,11 @@ func (m *BasicMetaService) ReadProperties(path string) (attr AttrValues, links [
 		Target: ExgDataMarker,
 		Title:  "ExgData Service",
 	})
-	// add /~search link
+	// add /~query link
 	links = append(links, Link{
 		Role:   ServiceMarker,
 		Target: QueryMarker,
-		Title:  "Search Service",
+		Title:  "Query Service",
 	})
 	return
 }
