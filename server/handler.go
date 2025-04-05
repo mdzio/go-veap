@@ -220,7 +220,7 @@ func (h *Handler) errorResponse(respWriter http.ResponseWriter, request *http.Re
 	w := wireServiceError{Message: fmt.Sprintf(format, args...)}
 
 	// log error
-	handlerLog.Warningf("Request from %s: %s; code %d", request.RemoteAddr, w.Message, code)
+	handlerLog.Debugf("Request from %s: %s; code %d", request.RemoteAddr, w.Message, code)
 
 	// marshal error as JSON
 	b, err := json.Marshal(w)
@@ -311,8 +311,7 @@ func (h *Handler) serveHistory(path string, params url.Values) ([]byte, error) {
 	maxLimit := h.historySizeLimit()
 	if limit != nil {
 		if *limit > maxLimit {
-			handlerLog.Warningf("History size limit exceeded: %d", *limit)
-			limit = &maxLimit
+			return nil, veap.NewErrorf(veap.StatusBadRequest, "History size limit exceeded: %d", *limit)
 		}
 	} else {
 		// no limit provided
